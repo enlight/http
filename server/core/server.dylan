@@ -674,6 +674,7 @@ define function %respond-top-level
                 *error-logger* = *server*.error-logger,
                 *request-logger* = *server*.request-logger,
                 *http-common-log* = *debug-logger*)
+    let websocket-server = #f;
     block (exit-respond-top-level)
       while (#t)                      // keep alive loop
         with-simple-restart("Skip this request and continue with the next")
@@ -709,6 +710,7 @@ define function %respond-top-level
                           // Bound to a <page-context> when first requested.
                           *page-context* = #f)
               route-request(*server*, request);
+              websocket-server := *response*.websocket-server;
               unless (client.client-stays-alive?)
                 finish-response(*response*);
               end;
@@ -716,12 +718,16 @@ define function %respond-top-level
             force-output(request.request-socket);
           end block; // finish-request
           if (client.client-listener.listener-exit-requested?
+              | websocket-server
               | ~request-keep-alive?(request))
             exit-respond-top-level();
           end;
         end with-simple-restart;
       end while;
     end block; // exit-respond-top-level
+    if (websocket-server)
+      websocket-server.process-frames();
+    end;
   end dynamic-bind;
 end function %respond-top-level;
 

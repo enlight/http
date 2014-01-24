@@ -14,3 +14,4 @@ files:	library
 	content-negotiation
 	cgi
 	command-line
+	websocket

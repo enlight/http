@@ -6,11 +6,12 @@ Copyright: See LICENSE in this distribution for details.
 define library http-server
   use base64;
   use collections,
-    import: { table-extensions };
+    import: { bit-vector, table-extensions };
   use command-line-parser;
   use common-dylan,
     import: { dylan, common-extensions, threads, simple-random };
   use concurrency;
+  use hash-algorithms;
   use http-common;
   use io,
     import: { format, format-out, standard-io, streams, streams-internals };
@@ -95,6 +96,8 @@ define module http-server
       <function-resource>,
       <redirecting-resource>,
       <sse-resource>, sse-push-event,
+      <websocket-resource>,
+        <websocket-frame>,
       add-resource-name,
       do-resources,
       function-resource;
@@ -199,6 +202,7 @@ end module http-server-unit;
 
 define module httpi                             // http internals
   use base64;
+  use bit-vector;
   use command-line-parser;
   use common-extensions,
     exclude: { format-to-string };
@@ -208,6 +212,7 @@ define module httpi                             // http internals
   use file-system;             // from system lib
   use format;
   use format-out;
+  use hash-algorithms;
   use http-common;
   use %http-common-byte-string;
   use http-server;

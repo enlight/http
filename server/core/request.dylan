@@ -327,13 +327,17 @@ end method process-request-content;
 //
 define method process-incoming-headers
     (request :: <request>)
+  let upgrade-connection? = #f;
   bind (conn-values :: <sequence> = get-header(request, "Connection", parsed: #t) | #())
     if (member?("Close", conn-values, test: string-equal?))
       request-keep-alive?(request) := #f
     elseif (member?("Keep-Alive", conn-values, test: string-equal?))
       request-keep-alive?(request) := #t
+    elseif (member?("Upgrade", conn-values, test: string-equal?))
+      upgrade-connection? := #t
     end;
   end;
+
   bind (host/port = get-header(request, "Host", parsed: #t))
     let host = host/port & head(host/port);
     let port = host/port & tail(host/port);
@@ -347,7 +351,31 @@ define method process-incoming-headers
       request.request-host := host;
     end;
   end;
+
+  if (upgrade-connection?)
+    process-upgrade-headers(request);
+  end if;
 end method process-incoming-headers;
+
+define inline function process-upgrade-headers
+    (request :: <request>)
+  let upgrade-to = get-header(request, "Upgrade", parsed: #t);
+  if (upgrade-to & string-equal?(upgrade-to, "websocket"))
+    // Validate the client's WebSocket handshake in accordance with RFC 6455 Section 4.2.1.
+    // (http://tools.ietf.org/html/rfc6455#section-4.2.1)
+    if (request.request-version ~= #"HTTP/1.1")
+      bad-request-error(reason: "HTTP/1.1 required for WebSocket");
+    end;
+    let websocket-version = get-header(request, "Sec-WebSocket-Version", parsed: #t);
+    if (~websocket-version | ~string-equal?(websocket-version, "13"))
+      bad-request-error(reason: "WebSocket version mismatch");
+    end;
+    let websocket-key = get-header(request, "Sec-WebSocket-Key", parsed: #t);
+    unless (websocket-key)
+      bad-request-error(reason: "WebSocket key missing")
+    end;
+  end;
+end;
 
 define inline function empty-line?
     (buffer :: <byte-string>, len :: <integer>) => (empty? :: <boolean>)
