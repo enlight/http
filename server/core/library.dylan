@@ -5,6 +5,7 @@ Copyright: See LICENSE in this distribution for details.
 
 define library http-server
   use base64;
+  use binary-data;
   use collections,
     import: { bit-vector, table-extensions };
   use command-line-parser;
@@ -203,6 +204,7 @@ end module http-server-unit;
 define module httpi                             // http internals
   use base64;
   use bit-vector;
+  use binary-data;
   use command-line-parser;
   use common-extensions,
     exclude: { format-to-string };

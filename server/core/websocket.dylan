@@ -22,8 +22,8 @@ define generic select-protocol-and-extensions
     (resource :: <websocket-resource>, client-protocols :: <object>, client-extensions :: <object>)
  => (successful? :: <boolean>);
 
-// This will be called for every frame received from the client (after it's unmasked).
-define generic incoming-frame-callback
+// This will be called for every frame received from the client (before it's unmasked).
+define generic process-incoming-frame
     (resource :: <websocket-resource>, frame :: <websocket-frame>) => ();
 
 // Override this method in a <websocket-resource> subclass to handle protocol and extension
@@ -56,97 +56,60 @@ define method process-frames
     (server :: <websocket-resource>)
   // TODO: deal with errors
   while (#t)
-    let frame = read-frame(server);
-    incoming-frame-callback(server, frame);
-    write-frame(server, server.outgoing-frames.pop());
+    let frame = parse-frame(<websocket-frame>, stream-contents(server.socket));
+    process-incoming-frame(server, frame);
+    write(server.socket, packet(assemble-frame(server.outgoing-frames.pop())));
   end;
 end;
 
-define open class <websocket-frame> (<object>)
-  slot fin :: <bit>;
-  slot rsv :: <bit-vector> = make(<bit-vector>, size: 3);
-  slot opcode :: <integer>,
-    init-value: 0;
-  slot payload-length :: <integer>, // note: less than 64 bits!
-    init-value: 0;
-  slot masking-key :: <byte-string>;
-  slot payload :: <byte-string>;
+// Dylan does not currently support 64-bit integers, so this type is defined for use as a
+// placeholder in the frame structure.
+define n-byte-vector(<big-endian-unsigned-integer-8byte>, 8) end;
+
+define binary-data <websocket-frame> (<header-frame>)
+  field fin :: <boolean-bit> = #f;
+  field rsv1 :: <boolean-bit> = #f;
+  field rsv2 :: <boolean-bit> = #f;
+  field rsv3 :: <boolean-bit> = #f;
+  enum field opcode :: <4bit-unsigned-integer> = 0,
+    mappings: { #x0 <=> #"continuation",
+                #x1 <=> #"text",
+                #x2 <=> #"binary",
+                #x8 <=> #"close",
+                #x9 <=> #"ping",
+                #xA <=> #"pong" };
+  field mask :: <boolean-bit> = #f;
+  field payload-length :: <7bit-unsigned-integer> = 0;
+  variably-typed field extended-payload-length, type-function:
+    case
+      frame.payload-length < 126 => <null-frame>;
+      frame.payload-length = 126 => <2byte-big-endian-unsigned-integer>;
+      frame.payload-length = 127 => <big-endian-unsigned-integer-8byte>; // 64-bit integer
+    end;
+  variably-typed field masking-key, type-function:
+    if (frame.mask) <big-endian-unsigned-integer-4byte> else <null-frame> end;
+  variably-typed field payload,
+    start: compute-header-length(frame) * 8,
+    length: compute-full-payload-length(frame) * 8;
 end;
 
-// Mask/Unmask the payload of the frame as per http://tools.ietf.org/html/rfc6455#section-5.3
-define method toggle-payload-mask!
-    (frame :: <websocket-frame>, masking-key :: <byte-string>) => ();
-  for (i from 0 to frame.payload.size())
-    frame.payload[i] := logxor(frame.payload[i], frame.masking-key[modulo(i, 4)]);
+// Compute the header length (in bytes) of a WebSocket frame.
+define method compute-header-length
+    (frame :: <websocket-frame>)
+  let mask-length = if (frame.mask) 4 else 0 end;
+  case
+    frame.payload-length < 126 => 2 + mask-length;
+    frame.payload-length = 126 => 2 + 2 + mask-length;
+    frame.payload-length = 127 => 2 + 8 + mask-length;
   end;
-end method toggle-payload-mask!;
+end;
 
-define method read-frame
-    (server :: <websocket-resource>) => (frame :: <websocket-frame>)
-  // TODO: handle <incomplete-read-error> and <end-of-stream-error>
-  let buffer = read(server.socket, 2);
-  let frame = make(<websocket-frame>);
-  frame.fin := ash(logand(buffer[0], #b10000000), -7);
-  frame.rsv[0] := ash(logand(buffer[0], #b01000000), -6);
-  frame.rsv[1] := ash(logand(buffer[0], #b00100000), -5);
-  frame.rsv[2] := ash(logand(buffer[0], #b00010000), -4);
-  frame.opcode := logand(buffer[0], #x0F);
-  let frame-masked? = (ash(logand(buffer[1], #b10000000), -7) ~= 0);
-  frame.payload-length := logand(buffer[1], #b01111111);
-
-  if (frame.payload-length = 126)
-    buffer := read(server.socket, 2);
-    frame.payload-length := logand(ash(as(<integer>, buffer[0]), 8), as(<integer>, buffer[1]));
-  elseif (frame.payload-length = 127)
-    buffer := read(server.socket, 8);
-    // TODO: signal an error since the length is a 64-bit unsigned integer that can't be easily
-    // stored in Dylan atm.
-  end;
-
-  let masking-key = #f;
-  if (frame-masked?)
-    masking-key := read(server.socket, 4);
+// Compute the full payload length (in bytes) of a WebSocket frame.
+define method compute-full-payload-length
+    (frame :: <websocket-frame>)
+  if (frame.payload-length < 126)
+    frame.payload-length
   else
-    // TODO: signal an error, frames sent by the client must always be masked, connection
-    // should be terminated
-  end;
-
-  frame.payload := read(server.socket, frame.payload-length);
-  if (frame-masked?)
-    toggle-payload-mask!(frame, masking-key);
-  end;
-
-  frame;
-end;
-
-define method write-frame
-    (server :: <websocket-resource>, frame :: <websocket-frame>)
-  let header-length = 2;
-  let payload-length-prefix = frame.payload-length;
-  if (frame.payload-length >= 65536)
-    header-length := header-length + 8;
-    payload-length-prefix := 127;
-    // TODO: signal an error since the length is a 64-bit unsigned integer that can't be easily
-    // stored in Dylan atm.
-  elseif (frame.payload-length > 125)
-    header-length := header-length + 2;
-    payload-length-prefix := 126;
-  elseif (frame.payload-length < 0)
-    // TODO: signal an error
-  end;
-
-  let header = make(<byte-string>, size: header-length);
-  header[0] := logior(ash(as(<byte>, frame.fin), 7),
-                      ash(as(<byte>, frame.rsv[0]), 6),
-                      ash(as(<byte>, frame.rsv[1]), 5),
-                      ash(as(<byte>, frame.rsv[2]), 4),
-                      as(<byte>, frame.opcode));
-  header[1] := payload-length-prefix;
-  if (frame.payload-length > 125)
-    header[2] := as(<byte>, ash(frame.payload-length, -8));
-    header[3] := as(<byte>, ash(ash(frame.payload-length, 8), -8));
-  end;
-
-  write(server.socket, header, end: header-length);
-  write(server.socket, frame.payload, end: frame.payload-length);
+    frame.extended-payload-length.getter
+  end if;
 end;

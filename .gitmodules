@@ -28,3 +28,6 @@
 [submodule "submodules/concurrency"]
 	path = submodules/concurrency
 	url = git://github.com/dylan-foundry/concurrency.git
+[submodule "submodules/binary-data"]
+	path = submodules/binary-data
+	url = https://github.com/dylan-lang/binary-data
