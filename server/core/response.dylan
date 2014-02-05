@@ -63,9 +63,6 @@ define open primary class <response> (<string-stream>, <base-http-response>)
 
 //  slot trailers-sent?
 
-  // Will not be #f iff the connection must be upgraded to a WebSocket.
-  slot websocket-server :: false-or(<websocket-resource>) = #f;
-
 end class <response>;
 
 define method initialize

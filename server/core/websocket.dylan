@@ -13,8 +13,7 @@ define open class <websocket-resource> (<resource>)
   // or #f if none were chosen.
   slot extensions :: false-or(<byte-string>) = #f;
   // These frames will be sent to the client.
-  slot outgoing-frames :: <deque>,
-    init-function: curry(make, <deque>);
+  constant slot outgoing-frames :: <deque> = make(<deque>);
 end;
 
 // The server should select a protocol and extensions out of those supported by the client.
@@ -38,6 +37,7 @@ define method respond-to-get
   let accept-code = concatenate(get-header(request, "Sec-WebSocket-Key", parsed: #t),
                                 "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
   set-header(response, "Sec-WebSocket-Accept", sha1(accept-code));
+
   let client-protocols = get-header(request, "Sec-WebSocket-Protocol", parsed: #t);
   let client-extensions = get-header(request, "Sec-WebSocket-Extensions", parsed: #t);
   if (select-protocol-and-extensions(resource, client-protocols, client-extensions))
@@ -48,13 +48,20 @@ define method respond-to-get
       set-header(response, "Sec-WebSocket-Extensions", resource.extensions);
     end if;
   end if;
-  resource.socket := request.request-socket;
-  response.websocket-server := resource;
+
+  let socket = request.request-socket;
+  resource.socket := socket;
+
+  send-response-line(response, socket);
+  send-headers(response, socket);
+
+  // spawn a new thread to handle the WebSocket traffic from here on
+  make(<thread>, function: curry(process-frames, resource));
 end;
 
 define method process-frames
     (server :: <websocket-resource>)
-  // TODO: deal with errors
+  // TODO: deal with errors, and close the connection and exit the loop at some point
   while (#t)
     let frame = parse-frame(<websocket-frame>, stream-contents(server.socket));
     process-incoming-frame(server, frame);
