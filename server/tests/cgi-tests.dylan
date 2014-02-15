@@ -1,19 +1,33 @@
-Module: http-server-tests
+Module: http-server-test-suite
 Copyright: See LICENSE in this distribution for details.
 Synopsis: Tests for CGI functionality
 
 // CGI 1.2 specification draft: http://ken.coar.org/cgi/cgi-120-00a.html
 // CGI 1.1 "spec": http://hoohoo.ncsa.illinois.edu/cgi/interface.html
 
-define suite cgi-test-suite ()
-  test cgi-location-header-test;
-  test cgi-required-environment-variables-test;
-  test cgi-status-header-test;
-  test cgi-command-line-test;
-  test cgi-working-directory-test;
-  test cgi-http-header-test;
-  test cgi-non-parsed-headers-test;
-end suite cgi-test-suite;
+// Called by test suite app when it is being invoked as a CGI script.
+// Note: don't log anything here since it will become part of the
+// response.
+define function cgi-test-main
+    (query :: <string>) => ()
+  // Expecting "cgi=xxx" for various values of xxx.
+  let parts = query & split(query, '=');
+  let cgi = parts & parts.size >= 2 & parts[1];
+  select (cgi by \=)
+    "cwd" =>
+      cgi-emit-working-directory();
+    "env" =>
+      cgi-emit-environment();
+    "HTTP_" =>
+      cgi-emit-http-headers();
+    "location" =>
+      cgi-emit-location-header();
+    "status" =>
+      cgi-emit-status-header();
+    otherwise =>
+      error("unrecognized query string: %s", query);
+  end;
+end function cgi-test-main;
 
 define function make-cgi-server
     (#key server-root :: <string>) => (server :: <http-server>)
@@ -280,3 +294,14 @@ define function cgi-emit-http-headers ()
     format-out("%s not defined in the CGI environment", header-name);
   end;
 end;
+
+
+define suite cgi-test-suite ()
+  test cgi-location-header-test;
+  test cgi-required-environment-variables-test;
+  test cgi-status-header-test;
+  test cgi-command-line-test;
+  test cgi-working-directory-test;
+  test cgi-http-header-test;
+  test cgi-non-parsed-headers-test;
+end suite cgi-test-suite;
